@@ -1,4 +1,4 @@
-import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { docClient, TABLE_NAME } from './client';
 import type { DocumentRecord } from '../types';
 import { randomUUID } from 'crypto';
@@ -27,6 +27,11 @@ function fromItem(item: Record<string, unknown>): DocumentRecord {
     s3_key: item.s3_key as string,
     created_at: item.created_at as string,
   };
+}
+
+function isMissingIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('The table does not have the specified index');
 }
 
 export async function saveDocument(
@@ -60,16 +65,33 @@ export async function getDocumentsByEmployeeAndCycle(
   employeeId: string,
   cycleId: string
 ): Promise<DocumentRecord[]> {
-  const r = await docClient.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: 'GSI2',
-      KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :sk)',
-      ExpressionAttributeValues: {
-        ':pk': `${EMP_PREFIX}${employeeId}`,
-        ':sk': cycleId,
-      },
-    })
-  );
-  return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  try {
+    const r = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :sk)',
+        ExpressionAttributeValues: {
+          ':pk': `${EMP_PREFIX}${employeeId}`,
+          ':sk': cycleId,
+        },
+      })
+    );
+    return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  } catch (error) {
+    if (!isMissingIndexError(error)) throw error;
+
+    const fallback = await docClient.send(
+      new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: 'entity_type = :entityType AND employee_id = :employeeId AND cycle_id = :cycleId',
+        ExpressionAttributeValues: {
+          ':entityType': 'DOCUMENT',
+          ':employeeId': employeeId,
+          ':cycleId': cycleId,
+        },
+      })
+    );
+    return (fallback.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  }
 }

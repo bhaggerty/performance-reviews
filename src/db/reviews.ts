@@ -1,4 +1,4 @@
-import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { docClient, TABLE_NAME } from './client';
 import type { ManagerReview, ReviewStatus } from '../types';
 import { randomUUID } from 'crypto';
@@ -65,6 +65,11 @@ function fromItem(item: Record<string, unknown>): ManagerReview {
   };
 }
 
+function isMissingIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('The table does not have the specified index');
+}
+
 export async function getManagerReview(cycleId: string, employeeId: string): Promise<ManagerReview | null> {
   const r = await docClient.send(
     new GetCommand({
@@ -94,15 +99,32 @@ export async function getReviewsByCycle(cycleId: string): Promise<ManagerReview[
 }
 
 export async function getReviewsByEmployee(employeeId: string): Promise<ManagerReview[]> {
-  const r = await docClient.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: 'GSI2',
-      KeyConditionExpression: 'GSI2PK = :pk',
-      ExpressionAttributeValues: { ':pk': `${EMP_PREFIX}${employeeId}` },
-    })
-  );
-  return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  try {
+    const r = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk',
+        ExpressionAttributeValues: { ':pk': `${EMP_PREFIX}${employeeId}` },
+      })
+    );
+    return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  } catch (error) {
+    if (!isMissingIndexError(error)) throw error;
+
+    const fallback = await docClient.send(
+      new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: '#type = :type AND employee_id = :employeeId',
+        ExpressionAttributeNames: { '#type': 'type' },
+        ExpressionAttributeValues: {
+          ':type': 'MANAGER_REVIEW',
+          ':employeeId': employeeId,
+        },
+      })
+    );
+    return (fallback.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  }
 }
 
 export async function saveManagerReview(

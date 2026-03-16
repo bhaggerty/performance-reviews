@@ -42,6 +42,11 @@ function fromItem(item: Record<string, unknown>): Employee {
   };
 }
 
+function isMissingIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('The table does not have the specified index');
+}
+
 export async function getEmployeeById(id: string): Promise<Employee | null> {
   const r = await docClient.send(
     new GetCommand({
@@ -54,37 +59,73 @@ export async function getEmployeeById(id: string): Promise<Employee | null> {
 }
 
 export async function getEmployeeBySlackId(slackId: string): Promise<Employee | null> {
-  const r = await docClient.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: 'GSI1',
-      KeyConditionExpression: 'GSI1PK = :pk',
-      ExpressionAttributeValues: { ':pk': `${SLACK_PREFIX}${slackId}` },
-      Limit: 1,
-    })
-  );
-  if (!r.Items?.length) return null;
-  const item = r.Items[0] as Record<string, unknown>;
-  return getEmployeeById((item.id as string) ?? '');
+  try {
+    const r = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :pk',
+        ExpressionAttributeValues: { ':pk': `${SLACK_PREFIX}${slackId}` },
+        Limit: 1,
+      })
+    );
+    if (!r.Items?.length) return null;
+    const item = r.Items[0] as Record<string, unknown>;
+    return getEmployeeById((item.id as string) ?? '');
+  } catch (error) {
+    if (!isMissingIndexError(error)) throw error;
+
+    const fallback = await docClient.send(
+      new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: '#type = :type AND slack_id = :slackId',
+        ExpressionAttributeNames: { '#type': 'type' },
+        ExpressionAttributeValues: {
+          ':type': 'EMPLOYEE',
+          ':slackId': slackId,
+        },
+        Limit: 1,
+      })
+    );
+    if (!fallback.Items?.length) return null;
+    return fromItem(fallback.Items[0] as Record<string, unknown>);
+  }
 }
 
 export async function getDirectReports(managerId: string): Promise<Employee[]> {
-  const r = await docClient.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: 'GSI2',
-      KeyConditionExpression: 'GSI2PK = :pk',
-      ExpressionAttributeValues: { ':pk': `${MANAGER_PREFIX}${managerId}` },
-    })
-  );
-  if (!r.Items?.length) return [];
-  const ids = r.Items.map((i) => (i as Record<string, unknown>).id as string).filter(Boolean);
-  const employees: Employee[] = [];
-  for (const id of ids) {
-    const emp = await getEmployeeById(id);
-    if (emp) employees.push(emp);
+  try {
+    const r = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk',
+        ExpressionAttributeValues: { ':pk': `${MANAGER_PREFIX}${managerId}` },
+      })
+    );
+    if (!r.Items?.length) return [];
+    const ids = r.Items.map((i) => (i as Record<string, unknown>).id as string).filter(Boolean);
+    const employees: Employee[] = [];
+    for (const id of ids) {
+      const emp = await getEmployeeById(id);
+      if (emp) employees.push(emp);
+    }
+    return employees;
+  } catch (error) {
+    if (!isMissingIndexError(error)) throw error;
+
+    const fallback = await docClient.send(
+      new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: '#type = :type AND manager_id = :managerId',
+        ExpressionAttributeNames: { '#type': 'type' },
+        ExpressionAttributeValues: {
+          ':type': 'EMPLOYEE',
+          ':managerId': managerId,
+        },
+      })
+    );
+    return (fallback.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
   }
-  return employees;
 }
 
 export async function listEmployees(): Promise<Employee[]> {
