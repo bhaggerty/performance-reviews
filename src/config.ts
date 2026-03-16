@@ -10,7 +10,10 @@ export const config = {
   },
   aws: {
     region: process.env.AWS_REGION ?? 'us-east-1',
-    tableName: process.env.DYNAMODB_TABLE ?? 'performance-reviews',
+    tableName:
+      process.env.DYNAMODB_TABLE ??
+      process.env.APP_DYNAMODB_TABLE_NAME ??
+      'performance-reviews',
     s3Bucket: process.env.S3_BUCKET ?? '',
     s3Prefix: process.env.S3_PREFIX ?? 'Performance Reviews',
   },

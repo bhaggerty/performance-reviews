@@ -1,7 +1,8 @@
 /**
  * Create DynamoDB table for performance-reviews (single-table design).
  * Run with: node scripts/create-table.js
- * Uses AWS_REGION and DYNAMODB_TABLE from env (default: performance-reviews).
+ * Uses AWS_REGION and DYNAMODB_TABLE/APP_DYNAMODB_TABLE_NAME from env
+ * (default: performance-reviews).
  */
 const {
   DynamoDBClient,
@@ -9,7 +10,10 @@ const {
   DescribeTableCommand,
 } = require('@aws-sdk/client-dynamodb');
 
-const tableName = process.env.DYNAMODB_TABLE || 'performance-reviews';
+const tableName =
+  process.env.DYNAMODB_TABLE ||
+  process.env.APP_DYNAMODB_TABLE_NAME ||
+  'performance-reviews';
 const region = process.env.AWS_REGION || 'us-east-1';
 const client = new DynamoDBClient({ region });
 
