@@ -114,6 +114,7 @@ async function archiveToWebhook(draft: DocumentDraft): Promise<ArchiveResult> {
       ...(archiveWebhookSecret ? { Authorization: `Bearer ${archiveWebhookSecret}` } : {}),
     },
     body: JSON.stringify({
+      shared_secret: archiveWebhookSecret || undefined,
       document_type: draft.type,
       title: draft.title,
       content: draft.content,

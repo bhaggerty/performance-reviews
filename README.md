@@ -42,6 +42,8 @@ Provide these values through your deployment platform:
 - `APP_DYNAMODB_TABLE_NAME` as an optional fallback if your platform injects the table name automatically
 - `S3_BUCKET`
 - `S3_PREFIX` as optional
+- `DOCUMENT_ARCHIVE_WEBHOOK_URL` as optional for a private Google Drive or Apps Script archive
+- `DOCUMENT_ARCHIVE_WEBHOOK_SECRET` as optional shared secret for that archive webhook
 - `ADMIN_SECRET` as optional
 - `PORT`
 
@@ -125,6 +127,8 @@ The repo includes a production Dockerfile at [Dockerfile](C:\Users\marli\perform
 - By cycle: `{S3_PREFIX}/{cycleName}/Manager Reviews/`, `Peer Feedback/`, `Upward Feedback/`
 - By employee: `{S3_PREFIX}/Employees/{Employee Name}/Performance Reviews/{cycleName}/`
 - Manager review submission writes a text file, stores it in S3, and saves the link in DynamoDB
+- Canonical document snapshots are always stored in DynamoDB for app-level access control
+- Optional private archive webhook support is documented in [docs/google-drive-archive.md](C:\Users\marli\performance-reviews\docs\google-drive-archive.md)
 
 ## Compliance
 
