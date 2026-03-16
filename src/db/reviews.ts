@@ -34,6 +34,7 @@ function toItem(r: ManagerReview) {
   if (r.required_improvement != null) item.required_improvement = r.required_improvement;
   if (r.improvement_timeline != null) item.improvement_timeline = r.improvement_timeline;
   if (r.hr_review_required != null) item.hr_review_required = r.hr_review_required;
+  if (r.follow_up_notes != null) item.follow_up_notes = r.follow_up_notes;
   if (r.acknowledged_at != null) item.acknowledged_at = r.acknowledged_at;
   if (r.acknowledgment_comment != null) item.acknowledgment_comment = r.acknowledgment_comment;
   return item;
@@ -57,6 +58,7 @@ function fromItem(item: Record<string, unknown>): ManagerReview {
     required_improvement: item.required_improvement as string | undefined,
     improvement_timeline: item.improvement_timeline as string | undefined,
     hr_review_required: item.hr_review_required as boolean | undefined,
+    follow_up_notes: item.follow_up_notes as string | undefined,
     submitted_at: item.submitted_at as string,
     acknowledged_at: item.acknowledged_at as string | undefined,
     acknowledgment_comment: item.acknowledgment_comment as string | undefined,
@@ -161,6 +163,7 @@ export async function saveManagerReview(
     required_improvement?: string;
     improvement_timeline?: string;
     hr_review_required?: boolean;
+    follow_up_notes?: string;
   }
 ): Promise<ManagerReview> {
   const id = randomUUID();
@@ -182,6 +185,7 @@ export async function saveManagerReview(
     required_improvement: data.required_improvement,
     improvement_timeline: data.improvement_timeline,
     hr_review_required: data.hr_review_required,
+    follow_up_notes: data.follow_up_notes,
     submitted_at: now,
     created_at: now,
     updated_at: now,

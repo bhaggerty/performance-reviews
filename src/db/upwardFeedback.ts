@@ -27,6 +27,7 @@ function fromItem(item: Record<string, unknown>): UpwardFeedback {
     strengths: item.strengths as string | undefined,
     improvements: item.improvements as string | undefined,
     hr_notes: item.hr_notes as string | undefined,
+    follow_up_notes: item.follow_up_notes as string | undefined,
     allow_hr_followup: item.allow_hr_followup as boolean,
     submitted_at: item.submitted_at as string,
     created_at: item.created_at as string,
@@ -42,6 +43,7 @@ export async function saveUpwardFeedback(
     strengths?: string;
     improvements?: string;
     hr_notes?: string;
+    follow_up_notes?: string;
     allow_hr_followup: boolean;
   }
 ): Promise<UpwardFeedback> {
@@ -55,6 +57,7 @@ export async function saveUpwardFeedback(
     strengths: data.strengths,
     improvements: data.improvements,
     hr_notes: data.hr_notes,
+    follow_up_notes: data.follow_up_notes,
     allow_hr_followup: data.allow_hr_followup,
     submitted_at: now,
     created_at: now,

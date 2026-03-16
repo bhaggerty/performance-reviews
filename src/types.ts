@@ -42,6 +42,7 @@ export interface ManagerReview {
   required_improvement?: string;
   improvement_timeline?: string;
   hr_review_required?: boolean;
+  follow_up_notes?: string;
   submitted_at: string;
   acknowledged_at?: string;
   acknowledgment_comment?: string;
@@ -73,6 +74,7 @@ export interface PeerFeedback {
   strengths?: string;
   growth_areas?: string;
   example?: string;
+  follow_up_notes?: string;
   submitted_at: string;
   created_at: string;
   updated_at: string;
@@ -87,6 +89,7 @@ export interface UpwardFeedback {
   strengths?: string;
   improvements?: string;
   hr_notes?: string;
+  follow_up_notes?: string;
   allow_hr_followup: boolean;
   submitted_at: string;
   created_at: string;

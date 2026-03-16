@@ -21,4 +21,9 @@ export const config = {
     archiveWebhookUrl: process.env.DOCUMENT_ARCHIVE_WEBHOOK_URL ?? '',
     archiveWebhookSecret: process.env.DOCUMENT_ARCHIVE_WEBHOOK_SECRET ?? '',
   },
+  ai: {
+    apiKey: process.env.OPENAI_API_KEY ?? '',
+    model: process.env.OPENAI_MODEL ?? 'gpt-5-mini',
+    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 1800),
+  },
 } as const;

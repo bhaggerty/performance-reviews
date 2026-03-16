@@ -113,6 +113,7 @@ function feedbackFromItem(item: Record<string, unknown>): PeerFeedback {
     strengths: item.strengths as string | undefined,
     growth_areas: item.growth_areas as string | undefined,
     example: item.example as string | undefined,
+    follow_up_notes: item.follow_up_notes as string | undefined,
     submitted_at: item.submitted_at as string,
     created_at: item.created_at as string,
     updated_at: item.updated_at as string,
@@ -124,7 +125,7 @@ export async function savePeerFeedback(
   employeeId: string,
   peerId: string,
   requestId: string,
-  data: { strengths?: string; growth_areas?: string; example?: string }
+  data: { strengths?: string; growth_areas?: string; example?: string; follow_up_notes?: string }
 ): Promise<PeerFeedback> {
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -137,6 +138,7 @@ export async function savePeerFeedback(
     strengths: data.strengths,
     growth_areas: data.growth_areas,
     example: data.example,
+    follow_up_notes: data.follow_up_notes,
     submitted_at: now,
     created_at: now,
     updated_at: now,

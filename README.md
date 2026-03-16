@@ -17,6 +17,7 @@ Slack-first performance review app: Slack is identity, and DynamoDB stores your 
 - Employee actions: view review and acknowledge with optional comment.
 - Peer feedback: request up to 3 peers, DM accept or decline, short submission modal.
 - Upward feedback: manager auto-filled, raw data available to HR.
+- Optional AI review coach: if a submission is too thin, the app can ask 1-2 follow-up questions before final save.
 - Admin API: list and create cycles, open and close cycles, upload employee CSV.
 - Compliance: audit log, timestamps, immutable stored docs, At Risk path details.
 
@@ -44,6 +45,9 @@ Provide these values through your deployment platform:
 - `S3_PREFIX` as optional
 - `DOCUMENT_ARCHIVE_WEBHOOK_URL` as optional for a private Google Drive or Apps Script archive
 - `DOCUMENT_ARCHIVE_WEBHOOK_SECRET` as optional shared secret for that archive webhook
+- `OPENAI_API_KEY` as optional for AI follow-up questions on sparse review submissions
+- `OPENAI_MODEL` as optional, defaults to `gpt-5-mini`
+- `OPENAI_TIMEOUT_MS` as optional timeout for the review coach call
 - `ADMIN_SECRET` as optional
 - `PORT`
 
@@ -129,6 +133,12 @@ The repo includes a production Dockerfile at [Dockerfile](C:\Users\marli\perform
 - Manager review submission writes a text file, stores it in S3, and saves the link in DynamoDB
 - Canonical document snapshots are always stored in DynamoDB for app-level access control
 - Optional private archive webhook support is documented in [docs/google-drive-archive.md](C:\Users\marli\performance-reviews\docs\google-drive-archive.md)
+
+## AI follow-up coach
+
+- When `OPENAI_API_KEY` is configured, the app checks sparse manager reviews, peer feedback, and upward feedback drafts before final submission.
+- If the draft lacks useful detail, the submitter gets the same modal back with 1-2 follow-up prompts and their original answers preserved.
+- The additional answers are stored as follow-up notes with the final review document.
 
 ## Compliance
 

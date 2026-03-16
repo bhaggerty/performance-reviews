@@ -223,6 +223,8 @@ export async function generateAndStoreManagerReview(
     review.improvement_timeline ? '' : undefined,
     review.hr_review_required ? 'HR review requested: Yes' : undefined,
     review.hr_review_required ? '' : undefined,
+    review.follow_up_notes ? review.follow_up_notes : undefined,
+    review.follow_up_notes ? '' : undefined,
     review.acknowledged_at ? `Acknowledged: ${review.acknowledged_at}` : undefined,
     review.acknowledgment_comment ? `Acknowledgment comment: ${review.acknowledgment_comment}` : undefined,
   ]);
@@ -276,6 +278,8 @@ export async function generateAndStorePeerFeedback(
     feedback.growth_areas ? '' : undefined,
     feedback.example ? 'Example' : undefined,
     feedback.example,
+    feedback.example ? '' : undefined,
+    feedback.follow_up_notes ? feedback.follow_up_notes : undefined,
   ]);
 
   return persistDocument({
@@ -325,6 +329,8 @@ export async function generateAndStoreUpwardFeedback(
     feedback.hr_notes ? 'Anything else HR should know' : undefined,
     feedback.hr_notes,
     feedback.hr_notes ? '' : undefined,
+    feedback.follow_up_notes ? feedback.follow_up_notes : undefined,
+    feedback.follow_up_notes ? '' : undefined,
     `Allow HR follow-up: ${feedback.allow_hr_followup ? 'Yes' : 'No'}`,
   ]);
 
