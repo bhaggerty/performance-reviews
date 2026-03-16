@@ -60,7 +60,9 @@ The app stores those values in DynamoDB alongside the canonical document snapsho
 
 Use an HR-only root folder or shared drive and create:
 
-- `Employees/<Employee Name>/Performance Reviews/<Cycle>/...`
+- `Employees/<Employee Name>/Performance Reviews/<Cycle>/Manager Reviews/...`
+- `Employees/<Employee Name>/Performance Reviews/<Cycle>/Peer Feedback/...`
+- `Employees/<Employee Name>/Performance Reviews/<Cycle>/Upward Feedback/...`
 - `<Cycle>/Manager Reviews/...`
 - `<Cycle>/Peer Feedback/...`
 - `<Cycle>/Upward Feedback/...`

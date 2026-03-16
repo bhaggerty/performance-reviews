@@ -21,6 +21,7 @@ function doPost(e) {
     employeeFolder = getOrCreateFolder_(employeeFolder, payload.archive_paths.employeeFolder);
     employeeFolder = getOrCreateFolder_(employeeFolder, 'Performance Reviews');
     employeeFolder = getOrCreateFolder_(employeeFolder, payload.archive_paths.cycleFolder);
+    employeeFolder = getOrCreateFolder_(employeeFolder, archiveTypeFolder_(payload.document_type));
 
     var cycleFolder = getOrCreateFolder_(rootFolder, payload.archive_paths.cycleFolder);
     cycleFolder = getOrCreateFolder_(cycleFolder, archiveTypeFolder_(payload.document_type));
