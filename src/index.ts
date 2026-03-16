@@ -20,15 +20,16 @@ import {
 } from './slack/upwardFeedback';
 import { handleAcknowledgeReview, handleViewMyReview } from './slack/acknowledge';
 
-// Body parsing and custom routes on receiver's router (same server as /slack/events)
-expressApp.use(express.json());
-expressApp.use(express.text({ type: 'text/csv', limit: '1mb' }));
-expressApp.use(express.urlencoded({ extended: true }));
+const adminApp = express.Router();
+adminApp.use(express.json());
+adminApp.use(express.text({ type: 'text/csv', limit: '1mb' }));
+adminApp.use(express.urlencoded({ extended: true }));
+adminApp.use(adminRoutes);
 
 expressApp.get('/health', (_req: unknown, res: { json: (o: object) => void }) => {
   res.json({ ok: true });
 });
-expressApp.use('/admin', adminRoutes);
+expressApp.use('/admin', adminApp);
 
 // --- Slack App Home Tab
 slackApp.event('app_home_opened', renderHomeTab);
