@@ -127,6 +127,23 @@ export async function getReviewsByEmployee(employeeId: string): Promise<ManagerR
   }
 }
 
+export async function getReviewsAuthoredByManager(managerId: string): Promise<ManagerReview[]> {
+  const r = await docClient.send(
+    new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: '#type = :type AND manager_id = :managerId',
+      ExpressionAttributeNames: { '#type': 'type' },
+      ExpressionAttributeValues: {
+        ':type': 'MANAGER_REVIEW',
+        ':managerId': managerId,
+      },
+    })
+  );
+  return (r.Items ?? [])
+    .map((i) => fromItem(i as Record<string, unknown>))
+    .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at));
+}
+
 export async function saveManagerReview(
   cycleId: string,
   employeeId: string,

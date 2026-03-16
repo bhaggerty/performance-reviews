@@ -145,6 +145,11 @@ export async function renderHomeTab(args: HomeArgs): Promise<void> {
             text: { type: 'plain_text', text: 'Write review', emoji: true },
             action_id: 'manager_write_review',
           },
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'View written reviews', emoji: true },
+            action_id: 'view_written_reviews',
+          },
         ],
       }
     );

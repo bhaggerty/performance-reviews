@@ -490,6 +490,6 @@ export async function handleManagerReviewSubmit(
   const cycleRecord = await getCycleById(cycleId);
   if (cycleRecord)
     await generateAndStoreManagerReview(review, cycleRecord.name).catch((err) =>
-      console.error('Document upload failed:', err)
+      console.error('Document persistence failed:', err)
     );
 }

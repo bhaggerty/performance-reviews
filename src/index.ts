@@ -18,7 +18,12 @@ import {
   openUpwardFeedbackModal,
   handleUpwardFeedbackSubmit,
 } from './slack/upwardFeedback';
-import { handleAcknowledgeReview, handleViewMyReview } from './slack/acknowledge';
+import {
+  handleAcknowledgeReview,
+  handleViewHistory,
+  handleViewMyReview,
+  handleViewWrittenReviews,
+} from './slack/acknowledge';
 
 const adminApp = express.Router();
 adminApp.use(express.json());
@@ -55,6 +60,8 @@ slackApp.view('upward_feedback_submit', handleUpwardFeedbackSubmit);
 // --- Review acknowledgment & view
 slackApp.action('acknowledge_review', handleAcknowledgeReview);
 slackApp.action('view_my_review', handleViewMyReview);
+slackApp.action('view_history', handleViewHistory);
+slackApp.action('view_written_reviews', handleViewWrittenReviews);
 
 // Placeholders (no-op or simple message)
 slackApp.action('self_reflection', async ({ ack, body, client }) => {
@@ -79,29 +86,6 @@ slackApp.action('self_reflection', async ({ ack, body, client }) => {
     },
   });
 });
-slackApp.action('view_history', async ({ ack, body, client }) => {
-  await ack?.();
-  const triggerId = 'trigger_id' in body ? body.trigger_id : undefined;
-  if (!triggerId) return;
-  await client.views.open({
-    trigger_id: triggerId,
-    view: {
-      type: 'modal',
-      title: { type: 'plain_text', text: 'Past reviews' },
-      close: { type: 'plain_text', text: 'Close' },
-      blocks: [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: 'Past reviews list can be wired to DB here.',
-          },
-        },
-      ],
-    },
-  });
-});
-
 const PORT = process.env.PORT ?? 3000;
 slackApp.start(PORT).then(() => {
   console.log(`Performance Reviews app running on port ${PORT}`);

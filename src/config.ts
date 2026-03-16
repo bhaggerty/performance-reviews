@@ -17,4 +17,8 @@ export const config = {
     s3Bucket: process.env.S3_BUCKET ?? '',
     s3Prefix: process.env.S3_PREFIX ?? 'Performance Reviews',
   },
+  documents: {
+    archiveWebhookUrl: process.env.DOCUMENT_ARCHIVE_WEBHOOK_URL ?? '',
+    archiveWebhookSecret: process.env.DOCUMENT_ARCHIVE_WEBHOOK_SECRET ?? '',
+  },
 } as const;

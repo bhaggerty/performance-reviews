@@ -94,13 +94,21 @@ export interface UpwardFeedback {
 }
 
 // Stored document reference
+export type DocumentVisibility = 'employee' | 'employee_and_manager' | 'hr';
+export type DocumentArchiveBackend = 'none' | 's3' | 'webhook';
+
 export interface DocumentRecord {
   id: string;
   employee_id: string;
   cycle_id: string;
   type: 'manager_review' | 'peer_feedback' | 'upward_feedback' | 'final_packet';
-  file_url: string;
-  s3_key: string;
+  title: string;
+  content: string;
+  author_employee_id?: string;
+  visibility: DocumentVisibility;
+  archive_backend: DocumentArchiveBackend;
+  archive_url?: string;
+  archive_key?: string;
   created_at: string;
 }
 

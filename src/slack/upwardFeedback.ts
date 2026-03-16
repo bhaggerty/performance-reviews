@@ -1,9 +1,10 @@
 import type { SlackActionMiddlewareArgs, SlackViewMiddlewareArgs, BlockAction, ViewSubmitAction, AllMiddlewareArgs } from '@slack/bolt';
 import { getEmployeeForSlackUser } from './middleware';
 import { getEmployeeById } from '../db/employees';
-import { getActiveCycle } from '../db/cycles';
+import { getActiveCycle, getCycleById } from '../db/cycles';
 import { saveUpwardFeedback } from '../db/upwardFeedback';
 import { logAudit } from '../db/audit';
+import { generateAndStoreUpwardFeedback } from '../services/documents';
 
 function blockId(prefix: string, ...parts: string[]) {
   return [prefix, ...parts].join('::');
@@ -153,7 +154,7 @@ export async function handleUpwardFeedbackSubmit(args: SlackViewMiddlewareArgs<V
   const state = (view.state?.values ?? {}) as Record<string, Record<string, { value?: string; selected_option?: { value: string } }>>;
   const allow_hr_followup = getVal(state, 'followup', 'allow_hr_followup') === 'yes';
 
-  await saveUpwardFeedback(cycleId, employeeId, managerId, {
+  const feedback = await saveUpwardFeedback(cycleId, employeeId, managerId, {
     strengths: getVal(state, 'strengths', 'strengths'),
     improvements: getVal(state, 'improvements', 'improvements'),
     hr_notes: getVal(state, 'hr_notes', 'hr_notes'),
@@ -168,4 +169,11 @@ export async function handleUpwardFeedbackSubmit(args: SlackViewMiddlewareArgs<V
     actor_slack_id: body.user?.id,
     details: { cycle_id: cycleId, manager_id: managerId },
   });
+
+  const cycle = await getCycleById(cycleId);
+  if (cycle) {
+    await generateAndStoreUpwardFeedback(feedback, cycle.name).catch((err) =>
+      console.error('Upward feedback document persistence failed:', err)
+    );
+  }
 }

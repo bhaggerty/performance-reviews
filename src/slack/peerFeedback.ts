@@ -1,9 +1,10 @@
 import type { SlackActionMiddlewareArgs, SlackViewMiddlewareArgs, BlockAction, ViewSubmitAction, AllMiddlewareArgs } from '@slack/bolt';
 import { getEmployeeForSlackUser } from './middleware';
 import { getEmployeeById, listEmployees } from '../db/employees';
-import { getActiveCycle } from '../db/cycles';
+import { getActiveCycle, getCycleById } from '../db/cycles';
 import { createPeerRequest, getPeerRequest, updatePeerRequestStatus, savePeerFeedback, getPeerFeedbackForEmployee } from '../db/peerFeedback';
 import { logAudit } from '../db/audit';
+import { generateAndStorePeerFeedback } from '../services/documents';
 
 const MAX_PEERS = 3;
 
@@ -263,7 +264,7 @@ export async function handlePeerFeedbackSubmit(args: SlackViewMiddlewareArgs<Vie
   const meta = JSON.parse(view.private_metadata ?? '{}');
   const { request_id: requestId, cycle_id: cycleId, employee_id: employeeId, peer_id: peerId } = meta;
   const state = (view.state?.values ?? {}) as Record<string, Record<string, { value?: string }>>;
-  await savePeerFeedback(cycleId, employeeId, peerId, requestId, {
+  const feedback = await savePeerFeedback(cycleId, employeeId, peerId, requestId, {
     strengths: getVal(state, 'strengths', 'strengths'),
     growth_areas: getVal(state, 'growth', 'growth_areas'),
     example: getVal(state, 'example', 'example'),
@@ -277,4 +278,11 @@ export async function handlePeerFeedbackSubmit(args: SlackViewMiddlewareArgs<Vie
     actor_slack_id: body.user?.id,
     details: { cycle_id: cycleId, employee_id: employeeId },
   });
+
+  const cycle = await getCycleById(cycleId);
+  if (cycle) {
+    await generateAndStorePeerFeedback(feedback, cycle.name).catch((err) =>
+      console.error('Peer feedback document persistence failed:', err)
+    );
+  }
 }
