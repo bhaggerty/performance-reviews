@@ -1,34 +1,87 @@
 {
   "name": "performance-reviews",
-  "version": "1.0.0",
-  "description": "Slack-first performance review app with manager decision tree, peer/upward feedback, ECS + DynamoDB",
+  "version": "2.0.0",
+  "description": "Slack-first performance review app with manager decision tree, peer/upward feedback, a People-admin web console, ECS + DynamoDB",
   "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node-dev --respawn src/index.ts",
-    "lint": "eslint src --ext .ts",
-    "check:table": "node scripts/check-table.js"
-  },
+  "private": true,
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "tsx watch src/index.ts",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.json",
+    "build:web": "npm run build --workspace web",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test",
+    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "check:table": "node scripts/check-table.js",
+    "db:create": "node scripts/create-table.js",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:dry-run": "tsx scripts/migrate.ts --dry-run",
+    "db:seed": "tsx scripts/seed.ts",
+    "reminders:run": "tsx src/jobs/runReminders.ts",
+    "jobs:run": "tsx src/jobs/runOutbox.ts",
+    "union-station:validate": "tsx scripts/validateUnionStation.ts"
   },
   "dependencies": {
-    "@slack/bolt": "^3.17.0",
-    "@aws-sdk/client-dynamodb": "^3.600.0",
-    "@aws-sdk/client-s3": "^3.600.0",
-    "@aws-sdk/lib-dynamodb": "^3.600.0",
-    "express": "^4.21.0",
+    "@slack/bolt": "^4.7.3",
+    "@aws-sdk/client-dynamodb": "^3.1114.0",
+    "@aws-sdk/lib-dynamodb": "^3.1114.0",
+    "@aws-sdk/client-s3": "^3.1114.0",
+    "@aws-sdk/s3-request-presigner": "^3.1114.0",
+    "@aws-sdk/client-secrets-manager": "^3.1114.0",
+    "express": "^5.0.0",
     "csv-parse": "^5.5.6",
-    "date-fns": "^3.6.0"
+    "date-fns": "^3.6.0",
+    "date-fns-tz": "^3.2.0",
+    "zod": "^3.23.8",
+    "helmet": "^8.0.0",
+    "express-rate-limit": "^7.4.1",
+    "cookie": "^1.0.2",
+    "jose": "^5.9.6"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.0",
-    "typescript": "^5.3.0",
-    "ts-node-dev": "^2.0.0",
-    "eslint": "^8.56.0",
-    "@typescript-eslint/eslint-plugin": "^6.19.0",
-    "@typescript-eslint/parser": "^6.19.0"
+    "@anthropic-ai/sdk": "^0.30.0",
+    "openai": "^4.73.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.14.0",
+    "@types/cookie": "^0.6.0",
+    "@types/supertest": "^6.0.2",
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "eslint": "^9.15.0",
+    "@eslint/js": "^9.15.0",
+    "typescript-eslint": "^8.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "vitest": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.11",
+    "supertest": "^7.0.0",
+    "aws-sdk-client-mock": "^4.1.0",
+    "concurrently": "^9.1.0",
+    "@playwright/test": "^1.49.0"
+  },
+  "overrides": {
+    "axios": "^1.19.0",
+    "form-data": "^4.0.6",
+    "path-to-regexp": "^8.4.2",
+    "minimatch@3.1.5": {
+      "brace-expansion": "^1.1.18"
+    }
   }
 }

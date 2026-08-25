@@ -1,195 +1,226 @@
-import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { docClient, TABLE_NAME } from './client';
-import type { Employee } from '../types';
+import { GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
+import { docClient, queryAll, TABLE_NAME, isConditionalCheckFailed } from './client';
+import {
+  deleteEmailIdentityItem,
+  deleteSlackIdentityItem,
+  getEmployeeIdByEmail,
+  getEmployeeIdBySlackId,
+  putEmailIdentityItem,
+  putSlackIdentityItem,
+  type TransactWriteItem,
+} from './identities';
+import type { Employee } from '../types';
+import { isoNow, systemClock, type Clock } from '../domain/clock';
 
 const PREFIX = 'EMP#';
-const SLACK_PREFIX = 'SLACK#';
-const MANAGER_PREFIX = 'MANAGER#';
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 
 function toItem(emp: Employee) {
   return {
     PK: `${PREFIX}${emp.id}`,
     SK: 'METADATA',
-    GSI1PK: `${SLACK_PREFIX}${emp.slack_id}`,
-    GSI1SK: `${PREFIX}${emp.id}`,
-    GSI2PK: `${MANAGER_PREFIX}${emp.manager_id ?? 'none'}`,
+    GSI1PK: 'EMPLOYEE_DIRECTORY',
+    GSI1SK: `${emp.name}#${emp.id}`,
+    GSI2PK: `MANAGER_REPORTS#${emp.manager_id ?? 'none'}`,
     GSI2SK: `${PREFIX}${emp.id}`,
     type: 'EMPLOYEE',
-    id: emp.id,
-    slack_id: emp.slack_id,
-    name: emp.name,
-    email: emp.email,
-    manager_id: emp.manager_id ?? null,
-    department: emp.department,
-    status: emp.status,
-    created_at: emp.created_at,
-    updated_at: emp.updated_at,
+    ...emp,
   };
 }
 
 function fromItem(item: Record<string, unknown>): Employee {
   return {
     id: item.id as string,
-    slack_id: item.slack_id as string,
+    slack_id: (item.slack_id as string) || null,
     name: item.name as string,
     email: item.email as string,
     manager_id: (item.manager_id as string) || null,
     department: (item.department as string) ?? '',
     status: (item.status as Employee['status']) ?? 'active',
+    is_people_admin: Boolean(item.is_people_admin),
+    schema_version: (item.schema_version as number) ?? 1,
     created_at: item.created_at as string,
     updated_at: item.updated_at as string,
   };
 }
 
-function isMissingIndexError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('The table does not have the specified index');
-}
-
 export async function getEmployeeById(id: string): Promise<Employee | null> {
   const r = await docClient.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { PK: `${PREFIX}${id}`, SK: 'METADATA' },
-    })
+    new GetCommand({ TableName: TABLE_NAME, Key: { PK: `${PREFIX}${id}`, SK: 'METADATA' } })
   );
-  if (!r.Item) return null;
-  return fromItem(r.Item as Record<string, unknown>);
+  return r.Item ? fromItem(r.Item as Record<string, unknown>) : null;
 }
 
 export async function getEmployeeBySlackId(slackId: string): Promise<Employee | null> {
-  try {
-    const r = await docClient.send(
-      new QueryCommand({
-        TableName: TABLE_NAME,
-        IndexName: 'GSI1',
-        KeyConditionExpression: 'GSI1PK = :pk',
-        ExpressionAttributeValues: { ':pk': `${SLACK_PREFIX}${slackId}` },
-        Limit: 1,
-      })
-    );
-    if (!r.Items?.length) return null;
-    const item = r.Items[0] as Record<string, unknown>;
-    return getEmployeeById((item.id as string) ?? '');
-  } catch (error) {
-    if (!isMissingIndexError(error)) throw error;
+  const id = await getEmployeeIdBySlackId(slackId);
+  return id ? getEmployeeById(id) : null;
+}
 
-    const fallback = await docClient.send(
-      new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: '#type = :type AND slack_id = :slackId',
-        ExpressionAttributeNames: { '#type': 'type' },
-        ExpressionAttributeValues: {
-          ':type': 'EMPLOYEE',
-          ':slackId': slackId,
-        },
-        Limit: 1,
-      })
-    );
-    if (!fallback.Items?.length) return null;
-    return fromItem(fallback.Items[0] as Record<string, unknown>);
-  }
+export async function getEmployeeByEmail(email: string): Promise<Employee | null> {
+  const id = await getEmployeeIdByEmail(normalizeEmail(email));
+  return id ? getEmployeeById(id) : null;
 }
 
 export async function getDirectReports(managerId: string): Promise<Employee[]> {
-  try {
-    const r = await docClient.send(
-      new QueryCommand({
-        TableName: TABLE_NAME,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: { ':pk': `${MANAGER_PREFIX}${managerId}` },
-      })
-    );
-    if (!r.Items?.length) return [];
-    const ids = r.Items.map((i) => (i as Record<string, unknown>).id as string).filter(Boolean);
-    const employees: Employee[] = [];
-    for (const id of ids) {
-      const emp = await getEmployeeById(id);
-      if (emp) employees.push(emp);
-    }
-    return employees;
-  } catch (error) {
-    if (!isMissingIndexError(error)) throw error;
-
-    const fallback = await docClient.send(
-      new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: '#type = :type AND manager_id = :managerId',
-        ExpressionAttributeNames: { '#type': 'type' },
-        ExpressionAttributeValues: {
-          ':type': 'EMPLOYEE',
-          ':managerId': managerId,
-        },
-      })
-    );
-    return (fallback.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
-  }
+  const items = await queryAll({
+    IndexName: 'GSI2',
+    KeyConditionExpression: 'GSI2PK = :pk',
+    ExpressionAttributeValues: { ':pk': `MANAGER_REPORTS#${managerId}` },
+  });
+  return items.map((i) => fromItem(i));
 }
 
+/** Full directory listing via a sparse GSI partition — no table Scan. */
 export async function listEmployees(): Promise<Employee[]> {
-  const r = await docClient.send(
-    new ScanCommand({
-      TableName: TABLE_NAME,
-      FilterExpression: '#type = :type',
-      ExpressionAttributeNames: { '#type': 'type' },
-      ExpressionAttributeValues: { ':type': 'EMPLOYEE' },
-    })
-  );
-  return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
+  const items = await queryAll({
+    IndexName: 'GSI1',
+    KeyConditionExpression: 'GSI1PK = :pk',
+    ExpressionAttributeValues: { ':pk': 'EMPLOYEE_DIRECTORY' },
+  });
+  return items.map((i) => fromItem(i));
 }
 
-export async function upsertEmployee(emp: Omit<Employee, 'id' | 'created_at' | 'updated_at'>): Promise<Employee> {
+export interface CreateEmployeeInput {
+  slack_id?: string | null;
+  name: string;
+  email: string;
+  manager_id?: string | null;
+  department?: string;
+  status?: Employee['status'];
+  is_people_admin?: boolean;
+}
+
+/**
+ * Create a brand-new employee with a fresh ID. Uniqueness on normalized email (and Slack ID,
+ * when present) is enforced atomically via a transaction against the identity records — a
+ * duplicate email or Slack ID throws rather than silently creating a second employee.
+ */
+export async function createEmployee(input: CreateEmployeeInput, clock: Clock = systemClock): Promise<Employee> {
+  const email = normalizeEmail(input.email);
   const id = randomUUID();
-  const now = new Date().toISOString();
-  const full: Employee = {
-    ...emp,
+  const now = isoNow(clock);
+  const employee: Employee = {
     id,
-    manager_id: emp.manager_id ?? null,
-    status: emp.status ?? 'active',
+    slack_id: input.slack_id || null,
+    name: input.name,
+    email,
+    manager_id: input.manager_id ?? null,
+    department: input.department ?? '',
+    status: input.status ?? 'active',
+    is_people_admin: input.is_people_admin ?? false,
+    schema_version: 1,
     created_at: now,
     updated_at: now,
   };
-  await docClient.send(
-    new PutCommand({
-      TableName: TABLE_NAME,
-      Item: toItem(full),
-    })
-  );
-  return full;
+
+  const transactItems: TransactWriteItem[] = [
+    { Put: { TableName: TABLE_NAME, Item: toItem(employee), ConditionExpression: 'attribute_not_exists(PK)' } },
+    putEmailIdentityItem(email, id),
+    ...(employee.slack_id ? [putSlackIdentityItem(employee.slack_id, id)] : []),
+  ];
+
+  try {
+    await docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      throw new Error(`Employee with email "${email}" or Slack ID "${employee.slack_id}" already exists.`);
+    }
+    throw error;
+  }
+  return employee;
 }
 
+export interface UpdateEmployeeInput {
+  name?: string;
+  email?: string;
+  manager_id?: string | null;
+  department?: string;
+  status?: Employee['status'];
+  slack_id?: string | null;
+  is_people_admin?: boolean;
+}
+
+/**
+ * Update an existing employee in place (preserving its ID). If the email or Slack ID is
+ * changing, the old identity pointer is deleted and the new one created atomically so
+ * uniqueness holds across the rename.
+ */
 export async function updateEmployee(
   id: string,
-  updates: Partial<Pick<Employee, 'name' | 'email' | 'manager_id' | 'department' | 'status'>>
+  updates: UpdateEmployeeInput,
+  clock: Clock = systemClock
 ): Promise<Employee | null> {
   const existing = await getEmployeeById(id);
   if (!existing) return null;
-  const now = new Date().toISOString();
-  const updated: Employee = { ...existing, ...updates, updated_at: now };
-  await docClient.send(
-    new PutCommand({
-      TableName: TABLE_NAME,
-      Item: toItem(updated),
-    })
-  );
+
+  const now = isoNow(clock);
+  const nextEmail = updates.email ? normalizeEmail(updates.email) : existing.email;
+  const nextSlackId = updates.slack_id !== undefined ? updates.slack_id : existing.slack_id;
+  const updated: Employee = {
+    ...existing,
+    ...updates,
+    email: nextEmail,
+    slack_id: nextSlackId,
+    manager_id: updates.manager_id !== undefined ? updates.manager_id : existing.manager_id,
+    updated_at: now,
+  };
+
+  const transactItems: TransactWriteItem[] = [
+    { Put: { TableName: TABLE_NAME, Item: toItem(updated), ConditionExpression: 'attribute_exists(PK)' } },
+  ];
+
+  if (nextEmail !== existing.email) {
+    transactItems.push(deleteEmailIdentityItem(existing.email));
+    transactItems.push(putEmailIdentityItem(nextEmail, id));
+  }
+  if (nextSlackId !== existing.slack_id) {
+    if (existing.slack_id) transactItems.push(deleteSlackIdentityItem(existing.slack_id));
+    if (nextSlackId) transactItems.push(putSlackIdentityItem(nextSlackId, id));
+  }
+
+  try {
+    await docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      throw new Error(`Email "${nextEmail}" or Slack ID "${nextSlackId}" is already used by another employee.`);
+    }
+    throw error;
+  }
   return updated;
 }
 
-export async function setManager(employeeId: string, managerId: string | null): Promise<Employee | null> {
-  return updateEmployee(employeeId, { manager_id: managerId });
+/**
+ * Stable upsert keyed by normalized email: updates the existing employee in place when the
+ * email is already known, otherwise creates a new one. This is the primitive the CSV importer
+ * uses so re-importing the same person never mints a second employee ID.
+ */
+export async function upsertEmployeeByEmail(
+  input: CreateEmployeeInput,
+  clock: Clock = systemClock
+): Promise<{ employee: Employee; created: boolean }> {
+  const email = normalizeEmail(input.email);
+  const existing = await getEmployeeByEmail(email);
+  if (existing) {
+    const updated = await updateEmployee(existing.id, { ...input, email }, clock);
+    return { employee: updated!, created: false };
+  }
+  const created = await createEmployee({ ...input, email }, clock);
+  return { employee: created, created: true };
 }
 
-export async function findOrCreateEmployeeBySlack(slackId: string, name: string, email: string): Promise<Employee> {
-  const existing = await getEmployeeBySlackId(slackId);
-  if (existing) return existing;
-  return upsertEmployee({
-    slack_id: slackId,
-    name,
-    email,
-    manager_id: null,
-    department: '',
-    status: 'active',
-  });
+export async function setManager(
+  employeeId: string,
+  managerId: string | null,
+  clock: Clock = systemClock
+): Promise<Employee | null> {
+  return updateEmployee(employeeId, { manager_id: managerId }, clock);
+}
+
+/** Used only by App Home for a Slack user with no directory match — read-only, no auto-create. */
+export async function findEmployeeBySlack(slackId: string): Promise<Employee | null> {
+  return getEmployeeBySlackId(slackId);
 }

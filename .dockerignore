@@ -1,5 +1,16 @@
 node_modules
+web/node_modules
 dist
+web/dist
 .env
+.env.*
+!.env.example
 .git
 npm-debug.log
+tests
+docs
+coverage
+playwright-report
+test-results
+*.md
+!README.md

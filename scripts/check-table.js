@@ -4,19 +4,15 @@
  */
 const { DynamoDBClient, DescribeTableCommand } = require('@aws-sdk/client-dynamodb');
 
-const tableName =
-  process.env.DYNAMODB_TABLE ||
-  process.env.APP_DYNAMODB_TABLE_NAME ||
-  'performance-reviews';
+const tableName = process.env.DYNAMODB_TABLE || process.env.APP_DYNAMODB_TABLE_NAME || 'performance-reviews';
 const region = process.env.AWS_REGION || 'us-east-1';
+const endpoint = process.env.DYNAMODB_ENDPOINT || undefined;
 
-const client = new DynamoDBClient({ region });
+const client = new DynamoDBClient({ region, ...(endpoint ? { endpoint } : {}) });
 const requiredIndexes = ['GSI1', 'GSI2'];
 
 async function main() {
-  const result = await client.send(
-    new DescribeTableCommand({ TableName: tableName })
-  );
+  const result = await client.send(new DescribeTableCommand({ TableName: tableName }));
 
   const table = result.Table;
   if (!table) {
@@ -32,9 +28,7 @@ async function main() {
   console.log(`Indexes: ${indexes.length > 0 ? indexes.join(', ') : '(none)'}`);
 
   if (missingIndexes.length > 0) {
-    console.error(
-      `Missing required GSIs: ${missingIndexes.join(', ')}. This app expects both GSI1 and GSI2.`
-    );
+    console.error(`Missing required GSIs: ${missingIndexes.join(', ')}. This app expects both GSI1 and GSI2.`);
     process.exit(1);
   }
 

@@ -31,11 +31,11 @@ function doPost(e) {
 
     return jsonResponse_(200, {
       archiveUrl: employeeFile.getUrl(),
-      archiveKey: employeeFile.getId()
+      archiveKey: employeeFile.getId(),
     });
   } catch (error) {
     return jsonResponse_(500, {
-      error: String(error)
+      error: String(error),
     });
   }
 }
@@ -76,7 +76,5 @@ function upsertTextFile_(folder, fileName, content) {
 }
 
 function jsonResponse_(status, body) {
-  return ContentService
-    .createTextOutput(JSON.stringify(body))
-    .setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(body)).setMimeType(ContentService.MimeType.JSON);
 }

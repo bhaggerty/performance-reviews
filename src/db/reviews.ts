@@ -1,43 +1,52 @@
-import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { docClient, TABLE_NAME } from './client';
-import type { ManagerReview, ReviewStatus } from '../types';
+import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
+import { docClient, TABLE_NAME, queryAll, isConditionalCheckFailed } from './client';
+import type {
+  Approval,
+  ApprovalAction,
+  AtRiskDetails,
+  ManagerReview,
+  PeopleNote,
+  PeopleReviewState,
+  ReviewStatus,
+} from '../types';
+import { isoNow, systemClock, type Clock } from '../domain/clock';
 
 const CYCLE_PREFIX = 'CYCLE#';
-const REVIEW_SK_PREFIX = 'REVIEW#';
-const EMP_PREFIX = 'EMP#';
+const CURRENT_SK_PREFIX = 'REVIEW#';
+const CURRENT_SK_SUFFIX = '#CURRENT';
+const VERSION_SK_PREFIX = 'REVIEWVERSION#';
+const NOTE_SK_PREFIX = 'PEOPLENOTE#';
+const APPROVAL_SK_PREFIX = 'APPROVAL#';
 
-function toItem(r: ManagerReview) {
-  const item: Record<string, unknown> = {
-    PK: `${CYCLE_PREFIX}${r.cycle_id}`,
-    SK: `${REVIEW_SK_PREFIX}${r.employee_id}`,
-    GSI2PK: `${EMP_PREFIX}${r.employee_id}`,
+function currentKey(cycleId: string, employeeId: string) {
+  return { PK: `${CYCLE_PREFIX}${cycleId}`, SK: `${CURRENT_SK_PREFIX}${employeeId}${CURRENT_SK_SUFFIX}` };
+}
+
+function versionKey(cycleId: string, employeeId: string, version: number) {
+  return {
+    PK: `${CYCLE_PREFIX}${cycleId}`,
+    SK: `${VERSION_SK_PREFIX}${employeeId}#${String(version).padStart(6, '0')}`,
+  };
+}
+
+/** Used only for the CURRENT pointer row — this is the one row per (cycle, employee) that
+ * should appear in "reviews by manager" / "reviews by employee" listings. */
+function toCurrentItem(r: ManagerReview) {
+  return {
+    GSI1PK: `MANAGER_REVIEWS#${r.manager_id}`,
+    GSI1SK: `${r.cycle_id}#${r.employee_id}`,
+    GSI2PK: `EMP_REVIEW_HISTORY#${r.employee_id}`,
     GSI2SK: `${CYCLE_PREFIX}${r.cycle_id}`,
     type: 'MANAGER_REVIEW',
-    id: r.id,
-    cycle_id: r.cycle_id,
-    employee_id: r.employee_id,
-    manager_id: r.manager_id,
-    status: r.status,
-    submitted_at: r.submitted_at,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    ...r,
   };
-  if (r.strengths != null) item.strengths = r.strengths;
-  if (r.focus_areas != null) item.focus_areas = r.focus_areas;
-  if (r.examples != null) item.examples = r.examples;
-  if (r.development_areas != null) item.development_areas = r.development_areas;
-  if (r.next_cycle_expectations != null) item.next_cycle_expectations = r.next_cycle_expectations;
-  if (r.manager_support != null) item.manager_support = r.manager_support;
-  if (r.primary_concerns != null) item.primary_concerns = r.primary_concerns;
-  if (r.communicated_previously != null) item.communicated_previously = r.communicated_previously;
-  if (r.required_improvement != null) item.required_improvement = r.required_improvement;
-  if (r.improvement_timeline != null) item.improvement_timeline = r.improvement_timeline;
-  if (r.hr_review_required != null) item.hr_review_required = r.hr_review_required;
-  if (r.follow_up_notes != null) item.follow_up_notes = r.follow_up_notes;
-  if (r.acknowledged_at != null) item.acknowledged_at = r.acknowledged_at;
-  if (r.acknowledgment_comment != null) item.acknowledgment_comment = r.acknowledgment_comment;
-  return item;
+}
+
+/** Used for per-version history rows — deliberately excluded from GSI1/GSI2 so history entries
+ * never duplicate the CURRENT row in manager/employee listings. */
+function toVersionItem(r: ManagerReview) {
+  return { type: 'MANAGER_REVIEW_VERSION', ...r };
 }
 
 function fromItem(item: Record<string, unknown>): ManagerReview {
@@ -46,6 +55,7 @@ function fromItem(item: Record<string, unknown>): ManagerReview {
     cycle_id: item.cycle_id as string,
     employee_id: item.employee_id as string,
     manager_id: item.manager_id as string,
+    version: item.version as number,
     status: item.status as ReviewStatus,
     strengths: item.strengths as string | undefined,
     focus_areas: item.focus_areas as string | undefined,
@@ -53,171 +63,326 @@ function fromItem(item: Record<string, unknown>): ManagerReview {
     development_areas: item.development_areas as string | undefined,
     next_cycle_expectations: item.next_cycle_expectations as string | undefined,
     manager_support: item.manager_support as string | undefined,
-    primary_concerns: item.primary_concerns as string | undefined,
-    communicated_previously: item.communicated_previously as boolean | undefined,
-    required_improvement: item.required_improvement as string | undefined,
-    improvement_timeline: item.improvement_timeline as string | undefined,
-    hr_review_required: item.hr_review_required as boolean | undefined,
+    at_risk: item.at_risk as AtRiskDetails | undefined,
     follow_up_notes: item.follow_up_notes as string | undefined,
+    people_state: (item.people_state as PeopleReviewState) ?? 'not_submitted',
+    return_reason: item.return_reason as string | undefined,
     submitted_at: item.submitted_at as string,
-    acknowledged_at: item.acknowledged_at as string | undefined,
-    acknowledgment_comment: item.acknowledgment_comment as string | undefined,
     created_at: item.created_at as string,
     updated_at: item.updated_at as string,
   };
 }
 
-function isMissingIndexError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('The table does not have the specified index');
-}
-
 export async function getManagerReview(cycleId: string, employeeId: string): Promise<ManagerReview | null> {
-  const r = await docClient.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: {
-        PK: `${CYCLE_PREFIX}${cycleId}`,
-        SK: `${REVIEW_SK_PREFIX}${employeeId}`,
-      },
-    })
-  );
-  if (!r.Item) return null;
-  return fromItem(r.Item as Record<string, unknown>);
+  const r = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: currentKey(cycleId, employeeId) }));
+  return r.Item ? fromItem(r.Item as Record<string, unknown>) : null;
 }
 
 export async function getReviewsByCycle(cycleId: string): Promise<ManagerReview[]> {
-  const r = await docClient.send(
-    new QueryCommand({
+  // "REVIEW#" and "REVIEWVERSION#" never collide under begins_with (position 6 differs: '#' vs 'V'),
+  // so this only matches the CURRENT pointer rows, not the per-version history rows.
+  const items = await queryAll({
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+    ExpressionAttributeValues: { ':pk': `${CYCLE_PREFIX}${cycleId}`, ':sk': CURRENT_SK_PREFIX },
+  });
+  return items.map((i) => fromItem(i));
+}
+
+export async function getReviewHistory(cycleId: string, employeeId: string): Promise<ManagerReview[]> {
+  const items = await queryAll({
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+    ExpressionAttributeValues: { ':pk': `${CYCLE_PREFIX}${cycleId}`, ':sk': `${VERSION_SK_PREFIX}${employeeId}#` },
+  });
+  return items.map((i) => fromItem(i)).sort((a, b) => a.version - b.version);
+}
+
+export async function listReviewsByManager(managerId: string): Promise<ManagerReview[]> {
+  const items = await queryAll({
+    IndexName: 'GSI1',
+    KeyConditionExpression: 'GSI1PK = :pk',
+    ExpressionAttributeValues: { ':pk': `MANAGER_REVIEWS#${managerId}` },
+  });
+  return items.map((i) => fromItem(i));
+}
+
+export async function getReviewsByEmployeeAcrossCycles(employeeId: string): Promise<ManagerReview[]> {
+  const items = await queryAll({
+    IndexName: 'GSI2',
+    KeyConditionExpression: 'GSI2PK = :pk',
+    ExpressionAttributeValues: { ':pk': `EMP_REVIEW_HISTORY#${employeeId}` },
+  });
+  return items.map((i) => fromItem(i));
+}
+
+export interface ManagerReviewDraftInput {
+  status: ReviewStatus;
+  strengths?: string;
+  focus_areas?: string;
+  examples?: string;
+  development_areas?: string;
+  next_cycle_expectations?: string;
+  manager_support?: string;
+  at_risk?: AtRiskDetails;
+  follow_up_notes?: string;
+}
+
+const EDITABLE_STATES: PeopleReviewState[] = ['not_submitted', 'manager_draft', 'returned_to_manager'];
+
+async function persistVersion(review: ManagerReview): Promise<void> {
+  await docClient.send(
+    new PutCommand({
       TableName: TABLE_NAME,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-      ExpressionAttributeValues: {
-        ':pk': `${CYCLE_PREFIX}${cycleId}`,
-        ':sk': REVIEW_SK_PREFIX,
-      },
+      Item: { ...versionKey(review.cycle_id, review.employee_id, review.version), ...toVersionItem(review) },
     })
   );
-  return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
 }
 
-export async function getReviewsByEmployee(employeeId: string): Promise<ManagerReview[]> {
-  try {
-    const r = await docClient.send(
-      new QueryCommand({
-        TableName: TABLE_NAME,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: { ':pk': `${EMP_PREFIX}${employeeId}` },
-      })
-    );
-    return (r.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
-  } catch (error) {
-    if (!isMissingIndexError(error)) throw error;
-
-    const fallback = await docClient.send(
-      new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: '#type = :type AND employee_id = :employeeId',
-        ExpressionAttributeNames: { '#type': 'type' },
-        ExpressionAttributeValues: {
-          ':type': 'MANAGER_REVIEW',
-          ':employeeId': employeeId,
-        },
-      })
-    );
-    return (fallback.Items ?? []).map((i) => fromItem(i as Record<string, unknown>));
-  }
-}
-
-export async function getReviewsAuthoredByManager(managerId: string): Promise<ManagerReview[]> {
-  const r = await docClient.send(
-    new ScanCommand({
-      TableName: TABLE_NAME,
-      FilterExpression: '#type = :type AND manager_id = :managerId',
-      ExpressionAttributeNames: { '#type': 'type' },
-      ExpressionAttributeValues: {
-        ':type': 'MANAGER_REVIEW',
-        ':managerId': managerId,
-      },
-    })
-  );
-  return (r.Items ?? [])
-    .map((i) => fromItem(i as Record<string, unknown>))
-    .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at));
-}
-
-export async function saveManagerReview(
+/** Save/resume a manager-review draft. Editable while not yet submitted, or while returned by People. */
+export async function saveManagerReviewDraft(
   cycleId: string,
   employeeId: string,
   managerId: string,
-  data: {
-    status: ReviewStatus;
-    strengths?: string;
-    focus_areas?: string;
-    examples?: string;
-    development_areas?: string;
-    next_cycle_expectations?: string;
-    manager_support?: string;
-    primary_concerns?: string;
-    communicated_previously?: boolean;
-    required_improvement?: string;
-    improvement_timeline?: string;
-    hr_review_required?: boolean;
-    follow_up_notes?: string;
-  }
+  data: ManagerReviewDraftInput,
+  clock: Clock = systemClock
 ): Promise<ManagerReview> {
-  const id = randomUUID();
-  const now = new Date().toISOString();
-  const review: ManagerReview = {
-    id,
+  const existing = await getManagerReview(cycleId, employeeId);
+  if (existing && !EDITABLE_STATES.includes(existing.people_state)) {
+    throw new Error('This review is not editable in its current state.');
+  }
+  const now = isoNow(clock);
+  const next: ManagerReview = {
+    id: existing?.id ?? randomUUID(),
     cycle_id: cycleId,
     employee_id: employeeId,
     manager_id: managerId,
-    status: data.status,
-    strengths: data.strengths,
-    focus_areas: data.focus_areas,
-    examples: data.examples,
-    development_areas: data.development_areas,
-    next_cycle_expectations: data.next_cycle_expectations,
-    manager_support: data.manager_support,
-    primary_concerns: data.primary_concerns,
-    communicated_previously: data.communicated_previously,
-    required_improvement: data.required_improvement,
-    improvement_timeline: data.improvement_timeline,
-    hr_review_required: data.hr_review_required,
-    follow_up_notes: data.follow_up_notes,
-    submitted_at: now,
-    created_at: now,
+    version: (existing?.version ?? 0) + 1,
+    ...data,
+    people_state: 'manager_draft',
+    return_reason: existing?.return_reason,
+    submitted_at: existing?.submitted_at ?? '',
+    created_at: existing?.created_at ?? now,
     updated_at: now,
   };
+
+  const conditionExpression = existing ? 'version = :expected' : 'attribute_not_exists(PK)';
+  const expressionValues = existing ? { ':expected': existing.version } : undefined;
+
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: toItem(review),
+      Item: { ...currentKey(cycleId, employeeId), ...toCurrentItem(next) },
+      ConditionExpression: conditionExpression,
+      ExpressionAttributeValues: expressionValues,
     })
   );
-  return review;
+  await persistVersion(next);
+  return next;
 }
 
-export async function acknowledgeReview(
+/** Final submission: conditionally written so it cannot silently clobber an already-submitted review. */
+export async function submitManagerReview(
   cycleId: string,
   employeeId: string,
-  comment?: string
-): Promise<ManagerReview | null> {
+  managerId: string,
+  data: ManagerReviewDraftInput,
+  clock: Clock = systemClock
+): Promise<ManagerReview> {
   const existing = await getManagerReview(cycleId, employeeId);
-  if (!existing) return null;
-  const now = new Date().toISOString();
-  const updated: ManagerReview = {
-    ...existing,
-    acknowledged_at: now,
-    acknowledgment_comment: comment,
+  if (existing && !EDITABLE_STATES.includes(existing.people_state)) {
+    throw new Error('This review has already been submitted and is awaiting People review.');
+  }
+  const now = isoNow(clock);
+  const next: ManagerReview = {
+    id: existing?.id ?? randomUUID(),
+    cycle_id: cycleId,
+    employee_id: employeeId,
+    manager_id: managerId,
+    version: (existing?.version ?? 0) + 1,
+    ...data,
+    people_state: 'submitted',
+    return_reason: undefined,
+    submitted_at: now,
+    created_at: existing?.created_at ?? now,
     updated_at: now,
+  };
+
+  try {
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLE_NAME,
+        Item: { ...currentKey(cycleId, employeeId), ...toCurrentItem(next) },
+        ConditionExpression: existing
+          ? '(version = :expected) AND (people_state IN (:s1, :s2, :s3))'
+          : 'attribute_not_exists(PK)',
+        ExpressionAttributeValues: existing
+          ? {
+              ':expected': existing.version,
+              ':s1': 'not_submitted',
+              ':s2': 'manager_draft',
+              ':s3': 'returned_to_manager',
+            }
+          : undefined,
+      })
+    );
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      throw new Error('This review has already been submitted and is awaiting People review.');
+    }
+    throw error;
+  }
+  await persistVersion(next);
+  return next;
+}
+
+async function transitionPeopleState(
+  cycleId: string,
+  employeeId: string,
+  expectedStates: PeopleReviewState[],
+  nextState: PeopleReviewState,
+  extra: Partial<ManagerReview>,
+  clock: Clock = systemClock
+): Promise<ManagerReview> {
+  const existing = await getManagerReview(cycleId, employeeId);
+  if (!existing) throw new Error('Review not found.');
+  if (!expectedStates.includes(existing.people_state)) {
+    throw new Error(`Review is in state "${existing.people_state}"; expected one of: ${expectedStates.join(', ')}.`);
+  }
+  const updated: ManagerReview = { ...existing, ...extra, people_state: nextState, updated_at: isoNow(clock) };
+  try {
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLE_NAME,
+        Item: { ...currentKey(cycleId, employeeId), ...toCurrentItem(updated) },
+        ConditionExpression: 'version = :v AND people_state = :expected',
+        ExpressionAttributeValues: { ':v': existing.version, ':expected': existing.people_state },
+      })
+    );
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) throw new Error('This review changed concurrently. Reload and try again.');
+    throw error;
+  }
+  return updated;
+}
+
+export const returnToManager = (cycleId: string, employeeId: string, reason: string, clock?: Clock) =>
+  transitionPeopleState(
+    cycleId,
+    employeeId,
+    ['submitted', 'people_reviewing'],
+    'returned_to_manager',
+    { return_reason: reason },
+    clock
+  );
+
+export const markPeopleReviewComplete = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(cycleId, employeeId, ['submitted', 'people_reviewing'], 'people_review_complete', {}, clock);
+
+export const beginPeopleReview = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(cycleId, employeeId, ['submitted'], 'people_reviewing', {}, clock);
+
+export const markAwaitingPrimaryApproval = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(cycleId, employeeId, ['people_review_complete'], 'awaiting_primary_approval', {}, clock);
+
+export const markApproved = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(
+    cycleId,
+    employeeId,
+    ['people_review_complete', 'awaiting_primary_approval'],
+    'approved',
+    {},
+    clock
+  );
+
+export const markReleased = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(cycleId, employeeId, ['approved'], 'released', {}, clock);
+
+export const markAcknowledged = (cycleId: string, employeeId: string, clock?: Clock) =>
+  transitionPeopleState(cycleId, employeeId, ['released'], 'acknowledged', {}, clock);
+
+// ---------------------------------------------------------------------------
+// People notes (internal, never shown to employee/manager)
+// ---------------------------------------------------------------------------
+
+export async function addPeopleNote(
+  cycleId: string,
+  employeeId: string,
+  authorId: string,
+  note: string,
+  clock: Clock = systemClock
+): Promise<PeopleNote> {
+  const now = isoNow(clock);
+  const record: PeopleNote = {
+    cycle_id: cycleId,
+    employee_id: employeeId,
+    id: randomUUID(),
+    author_id: authorId,
+    note,
+    created_at: now,
   };
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: toItem(updated),
+      Item: {
+        PK: `${CYCLE_PREFIX}${cycleId}`,
+        SK: `${NOTE_SK_PREFIX}${employeeId}#${now}#${record.id}`,
+        type: 'PEOPLE_NOTE',
+        ...record,
+      },
     })
   );
-  return updated;
+  return record;
+}
+
+export async function listPeopleNotes(cycleId: string, employeeId: string): Promise<PeopleNote[]> {
+  const items = await queryAll({
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+    ExpressionAttributeValues: { ':pk': `${CYCLE_PREFIX}${cycleId}`, ':sk': `${NOTE_SK_PREFIX}${employeeId}#` },
+  });
+  return items.map((i) => i as unknown as PeopleNote);
+}
+
+// ---------------------------------------------------------------------------
+// Approvals (recommend / primary approve) — distinct from release
+// ---------------------------------------------------------------------------
+
+export async function recordApproval(
+  cycleId: string,
+  employeeId: string,
+  action: ApprovalAction,
+  actorId: string,
+  reviewVersion: number,
+  notes: string | undefined,
+  clock: Clock = systemClock
+): Promise<Approval> {
+  const now = isoNow(clock);
+  const approval: Approval = {
+    id: randomUUID(),
+    cycle_id: cycleId,
+    employee_id: employeeId,
+    action,
+    actor_id: actorId,
+    review_version: reviewVersion,
+    notes,
+    created_at: now,
+  };
+  await docClient.send(
+    new PutCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        PK: `${CYCLE_PREFIX}${cycleId}`,
+        SK: `${APPROVAL_SK_PREFIX}${employeeId}#${now}#${approval.id}`,
+        type: 'APPROVAL',
+        ...approval,
+      },
+    })
+  );
+  return approval;
+}
+
+export async function listApprovals(cycleId: string, employeeId: string): Promise<Approval[]> {
+  const items = await queryAll({
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+    ExpressionAttributeValues: { ':pk': `${CYCLE_PREFIX}${cycleId}`, ':sk': `${APPROVAL_SK_PREFIX}${employeeId}#` },
+  });
+  return items.map((i) => i as unknown as Approval);
 }

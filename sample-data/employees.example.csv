@@ -1,0 +1,7 @@
+name,email,manager_email,department,status,slack_id
+Priya Natarajan,priya.natarajan@example.com,,Engineering,active,U01PRIYA
+Marcus Webb,marcus.webb@example.com,priya.natarajan@example.com,Engineering,active,
+Sofia Reyes,sofia.reyes@example.com,priya.natarajan@example.com,Engineering,active,
+Devon Hale,devon.hale@example.com,marcus.webb@example.com,Engineering,active,
+Aiko Tanaka,aiko.tanaka@example.com,marcus.webb@example.com,Engineering,active,
+Jamal Okafor,jamal.okafor@example.com,sofia.reyes@example.com,Support,inactive,

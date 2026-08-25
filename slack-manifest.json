@@ -1,0 +1,36 @@
+{
+  "_comment": "Replace YOUR-APP-URL below before using. This manifest targets Socket Mode by default (no public Request URL needed for events/interactivity); if you run HTTP mode instead, set socket_mode_enabled to false and fill in request_url values. See docs/SLACK_SETUP.md.",
+  "display_information": {
+    "name": "Performance Reviews",
+    "description": "Self-reflection, peer feedback, upward feedback, and manager reviews.",
+    "background_color": "#1a1a2e"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Performance Reviews",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": false,
+      "messages_tab_read_only_enabled": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["chat:write", "im:write", "users:read", "users:read.email"]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_home_opened"]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR-APP-URL/slack/events"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

@@ -1,8 +1,8 @@
-import { getEmployeeBySlackId } from '../db/employees';
-import type { Employee } from '../types';
+import { resolveSlackActor } from '../domain/authz';
+import type { Actor } from '../types';
 
-export type AppContext = { employee?: Employee | null };
-
-export async function getEmployeeForSlackUser(slackUserId: string): Promise<Employee | null> {
-  return getEmployeeBySlackId(slackUserId);
+/** Thin re-export kept for call-site clarity inside slack/*.ts — always re-resolves from the
+ * live Employee record, never trusts anything carried in the Slack payload. */
+export async function getActorForSlackUser(slackUserId: string | undefined | null): Promise<Actor | null> {
+  return resolveSlackActor(slackUserId);
 }

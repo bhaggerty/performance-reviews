@@ -1,0 +1,6 @@
+dist
+web
+node_modules
+coverage
+package-lock.json
+sample-data/*.csv
